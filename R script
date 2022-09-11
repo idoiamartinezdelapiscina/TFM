@@ -1,0 +1,66 @@
+##### Script for selecting variants out of the DSD-related and SF1-related gene lists #######
+#This script is written using the GN0199 sample as an example
+
+#To delete previous environment in R
+rm(list=ls())
+
+#Set working directory
+getwd()
+setwd ("N:/SF1next/G146A results WES/R script")
+
+#Call libraries
+library(dplyr)
+library(ggplot2)
+library(readxl)
+library(naniar)
+library(tidyverse)
+library(writexl)
+
+#Import dataset through the path and obtain information on the dataset
+GN0199_I_SNPs_exome <- read_excel("N:/SF1next/G146A results WES/GN0199_I/GN0199_I_SNPs_exome.xlsx")
+GN0199_I_indels_exome <- read_excel("N:/SF1next/G146A results WES/GN0199_I/GN0199_I_indels_exome.xlsx")
+View(GN0199_I_SNPs_exome)
+dim(GN0199_I_SNPs_exome)
+class(GN0199_I_SNPs_exome)
+View(GN0199_I_indels_exome)
+dim(GN0199_I_indels_exome)
+class(GN0199_I_indels_exome)
+
+#Bind the two datasets
+GN0199_I_exome <- rbind(GN0199_I_SNPs_exome, GN0199_I_indels_exome)
+
+#Subset dataset to have fewer variables of interest and to obtain information
+GN0199_I_exome<- GN0199_I_exome[,c(1:7, 9,10,30:34,44,46,47,49,50,52,56,58,65,67,81,110,111,114,116,119,120, 123,125,127:129)]
+dim(GN0199_I_exome)
+View(GN0199_I_exome)
+
+#Change names of some variables 
+colnames(GN0199_I_exome)[34]<-"zygosity"
+colnames(GN0199_I_exome)[36]<-"nr_reads"
+colnames(GN0199_I_exome)[35]<-"quality"
+
+#Import DSD-related and SF1-related genes tables (all mixed in a list: all_genes list)
+all_genes <- read_excel("N:/SF1next/G146A results WES/R script/all_genes_origin.xlsx") 
+class(all_genes)
+dim(all_genes)
+
+#Subset the dataset to only genes included in "all_genes"
+GN0199_I_exome_all_genes <-subset (GN0199_I_exome, Gene.refGene %in% all_genes$Gene_name)
+dim (GN0199_I_exome_all_genes)
+
+#Filter for type of variant, number of reads and allele frequency 
+#First, to relace NAs in columns ExonicFunc to "unknown", replace NAs in nr_reads for 20 reads, remove NAs and UNKNOWN from AAChange 
+GN0199_I_exome_all_genes$ExonicFunc.refGene[is.na(GN0199_I_exome_all_genes$ExonicFunc.refGene)]<- "unknown"
+GN0199_I_exome_all_genes$nr_reads[is.na(GN0199_I_exome_all_genes$nr_reads)] <- 20
+GN0199_I_exome_all_genes<- GN0199_I_exome_all_genes[!is.na(GN199_I_exome_all_genes$AAChange.refGene),]
+GN0199_I_exome_all_genes<- GN0199_I_exome_all_genes[!(GN0199_I_exome_all_genes$AAChange.refGene=="UNKNOWN"),]
+
+#Secondly, to filter according to type of variant and number of reads
+GN0199_I_exome_all_genes_filt<-GN0199_I_exome_all_genes[!(GN0199_I_exome_all_genes$ExonicFunc.refGene=="synonymous SNV" | GN0199_I_exome_all_genes$nr_reads<20),]
+#Finally, filter for allele frequency according to the origin of the patient (GnomAD), in this case Spanish origin) 
+#To change scientific notation in the gnomAD column
+GN0199_I_exome_all_genes_filt$gnomAD_genome_NFE[is.na(GN0199_I_exome_all_genes_filt$gnomAD_genome_NFE)] <- 0
+GN0199_I_exome_all_genes_filt_ori<-GN0199_I_exome_all_genes_filt[(GN0199_I_exome_all_genes_filt$gnomAD_genome_NFE <0.01),]
+dim(GN0199_I_exome_all_genes_filt_ori)
+#Export dataframe into an excel and store in correct folder
+write_xlsx(GN0199_I_exome_all_genes_filt_ori, "N:/SF1next/G146A results WES/Results for in silico/GN0199_I_exome_all_genes_filt_ori.xlsx")
