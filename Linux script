@@ -1,0 +1,59 @@
+# TFM_script for bioinformatics analysis in Linux. 
+
+The script has been numbered according to sections shown in the Figure 2 of the TFM. This script is written using the GN0199 sample as an example.
+
+Install the necessary tools 
+sudo apt-get update
+sudo apt-get -y install fastqc 
+sudo apt-get -y install fastp 
+sudo apt-get -y install samtools 
+sudo apt install bwa 
+sudo apt-get install picard
+
+Data pre-processing
+
+1.	Quality control (QC) on raw sequence data using FastQC
+Fastqc 
+# It opens the program to upload the R1_fastq and R2_fastq from each patient. It returns a html.
+
+2.	Trimming of adapters and quality trimming using Fastp
+
+fastp -i 220513-16-0199-I_S16_L001_R1_001.fastq.gz -I 220513-16-0199-I_S16_L001_R2_001.fastq.gz -o 220513-16-0199-I_S16_L001_R1_001_paired.trim.fq.gz -O 220513-16-0199-I_S16_L001_R2_001_paired.trim.fq.gz --unpaired1 220513-16-0199-I_S16_L001_R1_001_unpaired.trim.fq.gz --unpaired2 220513-16-0199-I_S16_L001_R2_001_unpaired.trim.fq.gz -h 0199_I.fastp.html -w 4 -l 60
+
+3.	Alignment to the reference sequence. BWA-MEM was used to map the paired-end clean reads to the human reference genome (GRCh38). Reference sequence from GATK resources (resources_broad_hg38_v0_Homo_sapiens_assembly38.fasta) was used. BWA requires building an index of the reference genome to allow it to more efficiently search the genome during sequence alignment.
+bwa index resources_broad_hg38_v0_Homo_sapiens_assembly38.fasta
+bwa mem -t 4 resources_broad_hg38_v0_Homo_sapiens_assembly38.fasta 220513-16-0199-I_S16_L001_R1_001_paired.trim.fq.gz 20513-16-0199-I_S16_L001_R2_001_paired.trim.fq.gz > 0199_aligned.sam
+
+4.	Sort and mark of duplicates using Samtools and Picard. Samtools is a set of utilities that manipulate nucleotide sequence alignments in the binary BAM format. It does sorting, merging and indexing.
+samtools view -S -b 0199_aligned.sam > 0199_I.bam
+samtools sort 0199_I.bam -o 0199_I_sorted.bam
+samtools view 0199_I_sorted.bam | head
+samtools index 0199_I_sorted.bam
+samtools flagstat 0199_I_sorted.bam, to count the total number of alignments
+samtools view 0199_I_sorted.bam | wc -l, for number of alignments
+samtools view -f 0x2 0199_I_sorted.bam | wc -l, for properly paired alignments
+samtools view -F 0x2 sample.sorted.bam | wc -l, for improperly impaired alignments
+java -jar picard.jar MarkDuplicates -I 0199_I.sorted.bam -O 0199_I_marked.bam -M 0199_I_marked_dup_metrics.txt
+# To add read groups and give an origin to a set of reads in order to assign a specific genotype to this origin when making the SNP/InDel calling.
+java -jar picard.jar AddOrReplaceReadGroups -I 0199_I_marked.bam -O 0199_I_marked_RG.bam -RGLB lib1 -RGPL illumina -RGPU unit1 -RGSM 1
+# To make sure that groups have been added
+samtools view -H 0199_I_marked_RG.bam | grep '@RG'
+
+5.	Recalibration of base quality using GATK. The software builds an error model using known covariates from all base calls (BaseRecalibrator) and applies the adjustement to the dataset based on the model (ApplyBQSR). A sequence dictionary needs to be built before and 3 files need to be created: reference_hg38.fasta, reference_hg38.dict and reference_hg38.fasta.fai.
+java -jar gatk-package-4.2.6.1-local.jar CreateSequenceDictionary -R reference_hg38.fasta -O reference_hg38.dict
+samtools faidx reference_hg38.fasta
+java -jar gatk-package-4.2.6.1-local.jar  BaseRecalibrator -I 0199_I_marked_RG.bam -R reference_hg38.fasta --known-sites hg38_Mills_and_1000G_indels.vcf.gz --known-sites hg38_dbsnp138.vcf -O 0199_I_recal_data.table
+java -jar gatk-package-4.2.6.1-local.jar ApplyBQSR -I 0199_I_marked_RG.bam -R reference_hg38.fasta --bqsr-recal-file 0199_I_recal_data.table -O 0199_I_bqsr.bam
+
+Variant discovery
+
+6.	Calling of germline SNPs and Indels and joint genotyping 
+java -jar gatk-package-4.2.6.1-local.jar HaplotypeCaller -I 0199_I_bqsr.bam -R reference_hg38.fasta -O 0199_I.g.vcf.gz -ERC GVCF -G StandardAnnotation -G AS_StandardAnnotation -G StandardHCAnnotation
+java -jar gatk-package-4.2.6.1-local.jar HaplotypeCaller -I 0199_I_bqsr.bam -R reference_hg38.fasta -O haplotype_0199_I.vcf.gz -ERC GVCF
+java -jar gatk-package-4.2.6.1-local.jar GenotypeGVCFs -V final_0199_I.vcf.gz -O final2_0199_I.vcf.gz -R reference_hg38.fasta -G StandardAnnotation -G AS_StandardAnnotation -G StandardHCAnnotation
+java -jar gatk-package-4.2.6.1-local.jar GenotypeGVCFs -V haplotype_0199_I.vcf.gz -O genotype_0199_I.vcf.gz -R reference_hg38.fasta
+
+7.	Variant filtering to get SNPs and Indels in different files
+java -jar gatk-package-4.2.6.1-local.jar VariantFiltration -R reference_hg38.fasta -V 0199_I.g.vcf.gz -O final_0199_I.vcf.gz -G StandardAnnotation -G AS_StandardAnnotation -G StandardHCAnnotation
+java -jar gatk-package-4.2.6.1-local.jar SelectVariants -V genotype_0199_I.vcf.gz -O 0199_I_SNPs_vcf.gz -select-type SNP
+java -jar gatk-package-4.2.6.1-local.jar SelectVariants -V genotype_0199_I.vcf.gz -O 0199_I_INDEL_vcf.gz -select-type INDEL
